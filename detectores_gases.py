@@ -26,18 +26,19 @@ def save_data(df):
     df.to_excel(FILE_NAME, index=False, engine="openpyxl")
 
 def gerar_pdf(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", style='B', size=14)
+    try:
+        if df.empty:
+            st.warning("Nenhum dado disponível para gerar o PDF.")
+            return None
 
-    # Cabeçalho principal
-    pdf.cell(0, 10, "Check List para Inspeção Diária de Detectores de Gases", 0, 1, 'C')
-    pdf.ln(5)
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", style='B', size=14)
 
-    if df.empty:
-        pdf.set_font("Arial", size=10)
-        pdf.cell(0, 10, "Nenhum dado disponível para exibição.", 0, 1)
-    else:
+        # Cabeçalho principal
+        pdf.cell(0, 10, "Check List para Inspeção Diária de Detectores de Gases", 0, 1, 'C')
+        pdf.ln(5)
+
         grouped = df.groupby(["Data", "Detector"])
         for (data, detector), group in grouped:
             pdf.set_font("Arial", style='B', size=12)
@@ -47,9 +48,9 @@ def gerar_pdf(df):
 
             # Cabeçalho das tabelas
             pdf.set_font("Arial", style='B', size=10)
-            pdf.set_fill_color(200, 200, 255)  # Azul claro
+            pdf.set_fill_color(200, 200, 255)  # Azul claro para "Entrada"
             pdf.cell(95, 8, "Entrada", 1, 0, 'C', fill=True)
-            pdf.set_fill_color(200, 255, 200)  # Verde claro
+            pdf.set_fill_color(200, 255, 200)  # Verde claro para "Saída"
             pdf.cell(95, 8, "Saída", 1, 1, 'C', fill=True)
 
             entrada = group[group["Período"] == "Entrada"]
@@ -59,54 +60,43 @@ def gerar_pdf(df):
             for i in range(max_rows):
                 pdf.set_font("Arial", size=9)
 
+                # Verificação de dados de entrada e saída
                 texto_entrada = (
                     f"Téc: {entrada.iloc[i]['Técnico Responsável']} | Horário: {entrada.iloc[i]['Horário']}\n"
                     f"Alarme Sonoro: {entrada.iloc[i]['Alarme Sonoro']} | Alarme Luminoso: {entrada.iloc[i]['Alarme Luminoso']}\n"
                     f"Ambiente Liberado: {entrada.iloc[i]['Ambiente Liberado']} | Obs: {entrada.iloc[i]['Observações']}"
-                ) if i < len(entrada) else ""
+                ) if i < len(entrada) else "Sem dados de entrada"
 
                 texto_saida = (
                     f"Téc: {saida.iloc[i]['Técnico Responsável']} | Horário: {saida.iloc[i]['Horário']}\n"
                     f"Alarme Sonoro: {saida.iloc[i]['Alarme Sonoro']} | Alarme Luminoso: {saida.iloc[i]['Alarme Luminoso']}\n"
                     f"Ambiente Liberado: {saida.iloc[i]['Ambiente Liberado']} | Obs: {saida.iloc[i]['Observações']}"
-                ) if i < len(saida) else ""
-
-                # Calcula a altura máxima entre as duas células
-                altura_maxima = max(
-                    pdf.get_string_width(texto_entrada) // 95 * 6 + 6,
-                    pdf.get_string_width(texto_saida) // 95 * 6 + 6
-                )
+                ) if i < len(saida) else "Sem dados de saída"
 
                 # Coluna Entrada com cor de fundo azul claro
-                pdf.set_fill_color(230, 230, 255)  # Azul bem claro
+                pdf.set_fill_color(230, 230, 255)
                 pdf.multi_cell(95, 6, texto_entrada, border=1, align='L', fill=True)
-                y_atual = pdf.get_y() - altura_maxima
+                y_atual = pdf.get_y() - 6
 
                 # Coluna Saída com cor de fundo verde claro
                 pdf.set_y(y_atual)
                 pdf.set_x(105)
-                pdf.set_fill_color(230, 255, 230)  # Verde bem claro
+                pdf.set_fill_color(230, 255, 230)
                 pdf.multi_cell(95, 6, texto_saida, border=1, align='L', fill=True)
 
             pdf.ln(5)
 
-    pdf_output = pdf.output(dest='S')
-    return io.BytesIO(pdf_output)
+        pdf_output = pdf.output(dest='S').encode('latin1')
+        return io.BytesIO(pdf_output)
 
-
-def _render_multiline_table(pdf, group, fill_color):
-    pdf.set_font("Arial", size=8)
-    for _, row in group.iterrows():
-        text = (
-            f"Téc: {row['Técnico Responsável']} | Horário: {row['Horário']} | "
-            f"Alarme Sonoro: {row['Alarme Sonoro']} | Alarme Luminoso: {row['Alarme Luminoso']} | "
-            f"Ambiente Liberado: {row['Ambiente Liberado']} | Obs: {row['Observações']}"
-        )
-        # Ajusta a altura e aplica a cor de fundo
-        pdf.set_fill_color(*fill_color)
-        pdf.multi_cell(190, 5, text, border=1, align='L', fill=True)
-        pdf.ln(1)
-
+    except IndexError as e:
+        st.error(f"Erro de índice ao acessar os dados: {str(e)}")
+    except KeyError as e:
+        st.error(f"Coluna não encontrada no DataFrame: {str(e)}")
+    except Exception as e:
+        st.error(f"Ocorreu um erro inesperado: {str(e)}")
+    
+    return None
 
 inspecoes = load_data()
 
@@ -167,9 +157,13 @@ st.download_button(
 
 if st.button("Gerar PDF"):
     pdf_file = gerar_pdf(inspecoes)
-    st.download_button(
-        label="Baixar PDF",
-        data=pdf_file,
-        file_name="checklist_inspecao.pdf",
-        mime="application/pdf"
-    )
+    if pdf_file:
+        st.download_button(
+            label="Baixar PDF",
+            data=pdf_file,
+            file_name="checklist_inspecao.pdf",
+            mime="application/pdf"
+        )
+    else:
+        st.error("Não foi possível gerar o PDF. Verifique os dados e tente novamente.")
+
