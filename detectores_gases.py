@@ -29,39 +29,61 @@ def gerar_pdf(df):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", style='B', size=14)
+
+    # Cabeçalho do PDF
     pdf.cell(0, 10, "Check List para Inspeção Diária de Detectores de Gases", 0, 1, 'C')
-    pdf.ln(5)
+    pdf.ln(10)
 
     if df.empty:
         pdf.set_font("Arial", size=10)
         pdf.cell(0, 10, "Nenhum dado disponível para exibição.", 0, 1)
     else:
-        grouped = df.groupby(["Detector", "Data"])
-        for (detector, data), group in grouped:
-            pdf.set_font("Arial", style='B', size=10)
-            pdf.cell(0, 10, f"Detector: {detector} | Data: {data}", 0, 1)
-            pdf.cell(0, 10, f"Modelo: {MODELO} | Fabricante: {FABRICANTE}", 0, 1)
-            pdf.ln(3)
+        grouped = df.groupby(["Data", "Detector"])
+        for (data, detector), group in grouped:
+            pdf.set_font("Arial", style='B', size=12)
+            pdf.cell(95, 10, f"Detector: {detector} - Data: {data}", 0, 0)
+            pdf.set_font("Arial", size=12)
+            pdf.cell(95, 10, f"Modelo: {MODELO} - Fabricante: {FABRICANTE}", 0, 1)
+            pdf.ln(5)
+            pdf.cell(95, 10, "Entrada", 1, 0, 'C')
+            pdf.cell(95, 10, "Saída", 1, 1, 'C')
 
             entrada = group[group["Período"] == "Entrada"]
             saida = group[group["Período"] == "Saída"]
+            max_rows = max(len(entrada), len(saida))
+            
+            for i in range(max_rows):
+                pdf.set_font("Arial", size=10)
+                if i < len(entrada):
+                    row_entrada = entrada.iloc[i]
+                    pdf.cell(95, 10, f"Alarme Sonoro: {row_entrada['Alarme Sonoro']}", 0, 0)
+                    pdf.cell(95, 10, f"Alarme Luminoso: {row_entrada['Alarme Luminoso']}", 0, 1)
+                    pdf.cell(95, 10, f"Ambiente Liberado: {row_entrada['Ambiente Liberado']}", 0, 0)
+                    pdf.cell(95, 10, f"Técnico: {row_entrada['Técnico Responsável']}", 0, 1)
+                    pdf.cell(95, 10, f"Matrícula: {row_entrada['Matrícula']}", 0, 0)
+                    pdf.cell(95, 10, f"Horário: {row_entrada['Horário']}", 0, 1)
+                    pdf.cell(95, 10, f"Observações: {row_entrada['Observações']}", 0, 1)
+                else:
+                    pdf.cell(95, 10, "", 0, 0)
+                    pdf.cell(95, 10, "", 0, 1)
 
-            # Título e conteúdo da tabela de Entrada (fundo verde claro)
-            pdf.set_fill_color(200, 255, 200)
-            pdf.cell(0, 10, "Entrada", 1, 1, 'C', fill=True)
-            _render_multiline_table(pdf, entrada, fill_color=(200, 255, 200))
-
-            # Título e conteúdo da tabela de Saída (fundo azul claro)
-            pdf.set_fill_color(200, 200, 255)
-            pdf.cell(0, 10, "Saída", 1, 1, 'C', fill=True)
-            _render_multiline_table(pdf, saida, fill_color=(200, 200, 255))
-
+                if i < len(saida):
+                    row_saida = saida.iloc[i]
+                    pdf.cell(95, 10, f"Alarme Sonoro: {row_saida['Alarme Sonoro']}", 0, 0)
+                    pdf.cell(95, 10, f"Alarme Luminoso: {row_saida['Alarme Luminoso']}", 0, 1)
+                    pdf.cell(95, 10, f"Ambiente Liberado: {row_saida['Ambiente Liberado']}", 0, 0)
+                    pdf.cell(95, 10, f"Técnico: {row_saida['Técnico Responsável']}", 0, 1)
+                    pdf.cell(95, 10, f"Matrícula: {row_saida['Matrícula']}", 0, 0)
+                    pdf.cell(95, 10, f"Horário: {row_saida['Horário']}", 0, 1)
+                    pdf.cell(95, 10, f"Observações: {row_saida['Observações']}", 0, 1)
+                else:
+                    pdf.cell(95, 10, "", 0, 0)
+                    pdf.cell(95, 10, "", 0, 1)
             pdf.ln(5)
+    
+    pdf_output = pdf.output(dest='S').encode('latin1')
+    return io.BytesIO(pdf_output)
 
-    pdf_output = io.BytesIO()
-    pdf.output(pdf_output)
-    pdf_output.seek(0)
-    return pdf_output
 
 def _render_multiline_table(pdf, group, fill_color):
     pdf.set_font("Arial", size=8)
