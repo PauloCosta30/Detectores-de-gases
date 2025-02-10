@@ -43,7 +43,12 @@ def gerar_pdf(df):
         for (data, detector, localidade), group in grouped:
             pdf.set_font("Arial", style='B', size=12)
             pdf.cell(0, 10, f"Detector: {detector} - Data: {data}", 0, 1)
-            pdf.cell(0, 10, f"Localidade: {localidade}", 0, 1)
+            
+            # Cor diferenciada para a localidade (azul claro)
+            pdf.set_font("Arial", style='B', size=10)
+            pdf.set_fill_color(240, 240, 255)  # Azul bem suave
+            pdf.cell(0, 10, f"Localidade: {localidade}", 0, 1, 'L', fill=True)
+            
             pdf.cell(0, 10, f"Modelo: {MODELO} - Fabricante: {FABRICANTE}", 0, 1)
             pdf.ln(5)
 
