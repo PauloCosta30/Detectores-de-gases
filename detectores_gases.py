@@ -28,7 +28,7 @@ def save_data(df):
 def gerar_pdf(df):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", style='B', size=14)
+    pdf.set_font("Arial", style='B', size=12)
 
     # Cabeçalho do PDF
     pdf.cell(0, 10, "Check List para Inspeção Diária de Detectores de Gases", 0, 1, 'C')
@@ -55,8 +55,7 @@ def gerar_pdf(df):
             entrada = group[group["Período"] == "Entrada"]
             if not entrada.empty:
                 row = entrada.iloc[0]
-                pdf.set_font("Arial", size=10)
-                # Linha de Entrada com bordas
+                pdf.set_font("Arial", size=9)  # Fonte menor para caber tudo
                 pdf.cell(40, 10, f"Alarme Sonoro: {row['Alarme Sonoro']}", 1, 0)
                 pdf.cell(40, 10, f"Alarme Luminoso: {row['Alarme Luminoso']}", 1, 0)
                 pdf.cell(40, 10, f"Ambiente Liberado: {row['Ambiente Liberado']}", 1, 0)
@@ -75,8 +74,7 @@ def gerar_pdf(df):
             saida = group[group["Período"] == "Saída"]
             if not saida.empty:
                 row = saida.iloc[0]
-                pdf.set_font("Arial", size=10)
-                # Linha de Saída com bordas
+                pdf.set_font("Arial", size=9)  # Fonte menor para caber tudo
                 pdf.cell(40, 10, f"Alarme Sonoro: {row['Alarme Sonoro']}", 1, 0)
                 pdf.cell(40, 10, f"Alarme Luminoso: {row['Alarme Luminoso']}", 1, 0)
                 pdf.cell(40, 10, f"Ambiente Liberado: {row['Ambiente Liberado']}", 1, 0)
@@ -87,7 +85,7 @@ def gerar_pdf(df):
             else:
                 pdf.cell(0, 10, "Nenhuma inspeção registrada para Saída.", 0, 1)
 
-            pdf.ln(10)
+            pdf.ln(5)
 
     pdf_output = pdf.output(dest='S').encode('latin1')
     return io.BytesIO(pdf_output)
