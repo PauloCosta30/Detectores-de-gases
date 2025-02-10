@@ -39,10 +39,11 @@ def gerar_pdf(df):
         pdf.cell(0, 10, "Check List para Inspeção Diária de Detectores de Gases", 0, 1, 'C')
         pdf.ln(5)
 
-        grouped = df.groupby(["Data", "Detector"])
-        for (data, detector), group in grouped:
+        grouped = df.groupby(["Data", "Detector", "Localidade"])
+        for (data, detector, localidade), group in grouped:
             pdf.set_font("Arial", style='B', size=12)
             pdf.cell(0, 10, f"Detector: {detector} - Data: {data}", 0, 1)
+            pdf.cell(0, 10, f"Localidade: {localidade}", 0, 1)
             pdf.cell(0, 10, f"Modelo: {MODELO} - Fabricante: {FABRICANTE}", 0, 1)
             pdf.ln(5)
 
@@ -60,7 +61,6 @@ def gerar_pdf(df):
             for i in range(max_rows):
                 pdf.set_font("Arial", size=9)
 
-                # Verificação de dados de entrada e saída
                 texto_entrada = (
                     f"Téc: {entrada.iloc[i]['Técnico Responsável']} | Horário: {entrada.iloc[i]['Horário']}\n"
                     f"Alarme Sonoro: {entrada.iloc[i]['Alarme Sonoro']} | Alarme Luminoso: {entrada.iloc[i]['Alarme Luminoso']}\n"
