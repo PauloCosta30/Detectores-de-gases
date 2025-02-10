@@ -47,32 +47,47 @@ def gerar_pdf(df):
             pdf.cell(95, 10, f"Fabricante: {FABRICANTE}", 0, 1)
             pdf.ln(5)
 
-            pdf.set_fill_color(200, 200, 200)  # Cor de fundo para o cabeçalho
-            pdf.cell(95, 10, "Entrada", 1, 0, 'C', fill=True)
-            pdf.cell(95, 10, "Saída", 1, 1, 'C', fill=True)
-
+            # Cabeçalho para a seção de Entrada
+            pdf.set_fill_color(220, 220, 220)
+            pdf.cell(0, 10, "Entrada", 1, 1, 'C', fill=True)
+            
+            # Exibindo as informações da Entrada em formato tabular
             entrada = group[group["Período"] == "Entrada"]
-            saida = group[group["Período"] == "Saída"]
-            max_rows = max(len(entrada), len(saida))
-
-            for i in range(max_rows):
+            if not entrada.empty:
+                row = entrada.iloc[0]
                 pdf.set_font("Arial", size=10)
-                
-                # Entrada
-                if i < len(entrada):
-                    row_entrada = entrada.iloc[i]
-                    pdf.cell(95, 10, f"Técnico: {row_entrada['Técnico Responsável']} - Alarme: {row_entrada['Alarme Sonoro']}", 0, 0)
-                else:
-                    pdf.cell(95, 10, "", 0, 0)
+                # Linha de Entrada com bordas
+                pdf.cell(40, 10, f"Alarme Sonoro: {row['Alarme Sonoro']}", 1, 0)
+                pdf.cell(40, 10, f"Alarme Luminoso: {row['Alarme Luminoso']}", 1, 0)
+                pdf.cell(40, 10, f"Ambiente Liberado: {row['Ambiente Liberado']}", 1, 0)
+                pdf.cell(40, 10, f"Técnico: {row['Técnico Responsável']}", 1, 0)
+                pdf.cell(30, 10, f"Matrícula: {row['Matrícula']}", 1, 0)
+                pdf.cell(30, 10, f"Horário: {row['Horário']}", 1, 0)
+                pdf.multi_cell(0, 10, f"Observações: {row['Observações']}", 1, 1)
+            else:
+                pdf.cell(0, 10, "Nenhuma inspeção registrada para Entrada.", 0, 1)
 
-                # Saída
-                if i < len(saida):
-                    row_saida = saida.iloc[i]
-                    pdf.cell(95, 10, f"Técnico: {row_saida['Técnico Responsável']} - Alarme: {row_saida['Alarme Sonoro']}", 0, 1)
-                else:
-                    pdf.cell(95, 10, "", 0, 1)
+            # Cabeçalho para a seção de Saída
+            pdf.set_fill_color(220, 220, 220)
+            pdf.cell(0, 10, "Saída", 1, 1, 'C', fill=True)
+            
+            # Exibindo as informações da Saída em formato tabular
+            saida = group[group["Período"] == "Saída"]
+            if not saida.empty:
+                row = saida.iloc[0]
+                pdf.set_font("Arial", size=10)
+                # Linha de Saída com bordas
+                pdf.cell(40, 10, f"Alarme Sonoro: {row['Alarme Sonoro']}", 1, 0)
+                pdf.cell(40, 10, f"Alarme Luminoso: {row['Alarme Luminoso']}", 1, 0)
+                pdf.cell(40, 10, f"Ambiente Liberado: {row['Ambiente Liberado']}", 1, 0)
+                pdf.cell(40, 10, f"Técnico: {row['Técnico Responsável']}", 1, 0)
+                pdf.cell(30, 10, f"Matrícula: {row['Matrícula']}", 1, 0)
+                pdf.cell(30, 10, f"Horário: {row['Horário']}", 1, 0)
+                pdf.multi_cell(0, 10, f"Observações: {row['Observações']}", 1, 1)
+            else:
+                pdf.cell(0, 10, "Nenhuma inspeção registrada para Saída.", 0, 1)
 
-            pdf.ln(5)
+            pdf.ln(10)
 
     pdf_output = pdf.output(dest='S').encode('latin1')
     return io.BytesIO(pdf_output)
