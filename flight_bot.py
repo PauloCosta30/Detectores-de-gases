@@ -10,20 +10,21 @@ import time
 import json
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 from dataclasses import dataclass, field, asdict
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import requests
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters, ConversationHandler
+    Application,
+    CommandHandler,
+    ContextTypes
 )
 
-# ─── SERVIDOR HTTP (KEEP ALIVE PARA RENDER) ─────────────────────────────────────
+# ─── SERVIDOR HTTP (OBRIGATÓRIO NO RENDER) ───────────────────────────────────────
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -36,38 +37,19 @@ def iniciar_servidor_http():
     print(f"🌐 Servidor HTTP ativo na porta {porta}")
     servidor.serve_forever()
 
-# ─── Configuração de Logging ───────────────────────────────────────────────────
+# ─── LOGGING ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler()
-    ]
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ─── Estados da Conversa ───────────────────────────────────────────────────────
-AGUARDANDO_ORIGEM, AGUARDANDO_PRECO, AGUARDANDO_DATA, AGUARDANDO_TIPO = range(4)
-
-# ─── Configurações ─────────────────────────────────────────────────────────────
+# ─── CONFIGURAÇÕES ─────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "SUA_CHAVE_SERPAPI_AQUI")
 INTERVALO_VERIFICACAO_MINUTOS = 30
 
-# ─── Aeroportos (mantido igual) ────────────────────────────────────────────────
-AEROPORTOS_BRASIL = {
-    "São Paulo (GRU)": "GRU",
-    "Rio de Janeiro (GIG)": "GIG",
-    "Brasília (BSB)": "BSB",
-    "Salvador (SSA)": "SSA",
-    "Belo Horizonte (CNF)": "CNF",
-    "Fortaleza (FOR)": "FOR",
-    "Recife (REC)": "REC",
-    "Porto Alegre (POA)": "POA",
-    "Curitiba (CWB)": "CWB",
-}
-
-# ─── Estrutura de Dados ────────────────────────────────────────────────────────
+# ─── ESTRUTURA DE DADOS ────────────────────────────────────────────────────────
 @dataclass
 class AlertaPassagem:
     chat_id: int
@@ -75,12 +57,11 @@ class AlertaPassagem:
     codigo_origem: str
     preco_maximo: float
     data_partida: str
-    tipo_voo: str
     ativo: bool = True
     criado_em: str = field(default_factory=lambda: datetime.now().isoformat())
     ultimo_alerta: Optional[str] = None
 
-# ─── Gerenciador de Alertas ────────────────────────────────────────────────────
+# ─── GERENCIADOR DE ALERTAS ────────────────────────────────────────────────────
 class GerenciadorAlertas:
     def __init__(self, arquivo="alertas.json"):
         self.arquivo = arquivo
@@ -94,29 +75,19 @@ class GerenciadorAlertas:
 
     def salvar(self):
         with open(self.arquivo, "w", encoding="utf-8") as f:
-            json.dump([asdict(a) for a in self.alertas], f, indent=2, ensure_ascii=False)
-
-    def adicionar(self, alerta):
-        self.alertas.append(alerta)
-        self.salvar()
-
-    def listar_usuario(self, chat_id):
-        return [a for a in self.alertas if a.chat_id == chat_id and a.ativo]
+            json.dump(
+                [asdict(a) for a in self.alertas],
+                f,
+                indent=2,
+                ensure_ascii=False
+            )
 
     def todos_ativos(self):
         return [a for a in self.alertas if a.ativo]
 
-    def remover(self, chat_id, indice):
-        alertas = self.listar_usuario(chat_id)
-        if 0 <= indice < len(alertas):
-            self.alertas.remove(alertas[indice])
-            self.salvar()
-            return True
-        return False
-
 gerenciador = GerenciadorAlertas()
 
-# ─── Scraper via SerpAPI (mantido) ──────────────────────────────────────────────
+# ─── SCRAPER (SERPAPI) ─────────────────────────────────────────────────────────
 class GoogleFlightsScraper:
     BASE_URL = "https://serpapi.com/search"
 
@@ -134,16 +105,30 @@ class GoogleFlightsScraper:
             r = requests.get(self.BASE_URL, params=params, timeout=30)
             r.raise_for_status()
             return r.json().get("best_flights", [])
-        except Exception:
+        except Exception as e:
+            logger.error(f"Erro ao buscar voos: {e}")
             return []
 
 scraper = GoogleFlightsScraper()
 
-# ─── Telegram Handlers (mantidos) ───────────────────────────────────────────────
+# ─── TELEGRAM HANDLERS ─────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✈️ Bot de passagens ativo! Use /novo_alerta")
+    await update.message.reply_text(
+        "✈️ Bot de passagens ativo!\n"
+        "Use /novo_alerta para criar um alerta."
+    )
 
-# ─── Verificador de preços ─────────────────────────────────────────────────────
+async def novo_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🛫 Novo alerta iniciado!\n\n"
+        "Em breve vou te perguntar:\n"
+        "• cidade de origem\n"
+        "• data da viagem\n"
+        "• preço máximo\n\n"
+        "🚧 Fluxo completo em desenvolvimento"
+    )
+
+# ─── VERIFICADOR DE PREÇOS (JOB) ───────────────────────────────────────────────
 async def verificar_precos(bot: Bot):
     for alerta in gerenciador.todos_ativos():
         voos = scraper.buscar_voos(alerta.codigo_origem, "SSA", alerta.data_partida)
@@ -159,14 +144,17 @@ def main():
         print("❌ Configure o TELEGRAM_BOT_TOKEN")
         return
 
-    # 🔥 Inicia servidor HTTP em background (Render)
+    # 🔥 HTTP server obrigatório no Render
     Thread(target=iniciar_servidor_http, daemon=True).start()
 
     print("✈️ Iniciando bot Telegram...")
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # comandos
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("novo_alerta", novo_alerta))
 
+    # job periódico
     async def tarefa(context: ContextTypes.DEFAULT_TYPE):
         await verificar_precos(context.bot)
 
