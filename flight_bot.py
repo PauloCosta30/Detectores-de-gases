@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
 SERPAPI_KEY        = os.getenv("SERPAPI_KEY", "SUA_CHAVE_SERPAPI_AQUI")
-ADMIN_CHAT_ID      = int(os.getenv("ADMIN_CHAT_ID", "0"))   # SEU chat_id aqui
+ADMIN_CHAT_ID      = int(os.getenv("ADMIN_CHAT_ID", "8012383697"))   # SEU chat_id aqui
 INTERVALO_MINUTOS  = 30
 
 # ─── ESTADOS DA CONVERSA ──────────────────────────────────────────────────────
@@ -55,6 +55,7 @@ ORIGEM, DESTINO, DATA, PRECO = range(4)
 # ─── AEROPORTOS DO BRASIL ─────────────────────────────────────────────────────
 AEROPORTOS = {
     "Belém (BEL)":           "BEL",
+    "São Luís (MA)           "MA",
     "Brasília (BSB)":        "BSB",
     "Belo Horizonte (CNF)":  "CNF",
     "Curitiba (CWB)":        "CWB",
