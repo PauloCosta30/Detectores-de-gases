@@ -55,7 +55,7 @@ ORIGEM, DESTINO, DATA, PRECO = range(4)
 # ─── AEROPORTOS DO BRASIL ─────────────────────────────────────────────────────
 AEROPORTOS = {
     "Belém (BEL)":           "BEL",
-    "São Luís (MA)           "MA",
+    "São Luís (MA)           "SLM",
     "Brasília (BSB)":        "BSB",
     "Belo Horizonte (CNF)":  "CNF",
     "Curitiba (CWB)":        "CWB",
