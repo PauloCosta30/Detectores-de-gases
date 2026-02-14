@@ -10,6 +10,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import time
 import requests
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import Conflict, NetworkError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -675,6 +676,18 @@ async def verificar_precos(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Erro ao verificar alerta: {e}")
 
 
+# ─── HANDLER DE ERROS ────────────────────────────────────────────────────────
+async def handler_erros(update: object, context: ContextTypes.DEFAULT_TYPE):
+    erro = context.error
+    if isinstance(erro, Conflict):
+        logger.warning("⚠️ Conflict detectado — outra instância em encerramento. Aguardando...")
+        time.sleep(5)
+    elif isinstance(erro, NetworkError):
+        logger.warning(f"⚠️ Erro de rede: {erro}. Reconectando...")
+    else:
+        logger.error(f"❌ Erro inesperado: {erro}")
+
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def limpar_sessao_anterior():
     """Encerra qualquer getUpdates anterior via deleteWebhook antes de iniciar."""
@@ -723,6 +736,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_remover, pattern=r"^del\|"))
 
     app.job_queue.run_repeating(verificar_precos, interval=INTERVALO_MINUTOS * 60, first=15)
+    app.add_error_handler(handler_erros)
 
     print("✅ Bot rodando! Aguardando mensagens...")
     app.run_polling(
