@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, asdict
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+import time
 import requests
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -675,6 +676,15 @@ async def verificar_precos(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
+def limpar_sessao_anterior():
+    """Encerra qualquer getUpdates anterior via deleteWebhook antes de iniciar."""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook"
+        requests.post(url, json={"drop_pending_updates": True}, timeout=10)
+        print("🧹 Sessão anterior encerrada com sucesso.")
+    except Exception as e:
+        print(f"⚠️ Aviso ao limpar sessão: {e}")
+
 def main():
     if TELEGRAM_BOT_TOKEN == "SEU_TOKEN_AQUI":
         print("❌ Configure o TELEGRAM_BOT_TOKEN nas variáveis de ambiente!")
@@ -683,6 +693,10 @@ def main():
         print("⚠️  AVISO: Configure o ADMIN_CHAT_ID para receber solicitações de acesso!")
 
     Thread(target=iniciar_servidor_http, daemon=True).start()
+
+    # Limpa sessão anterior para evitar erro de Conflict
+    limpar_sessao_anterior()
+    time.sleep(3)  # aguarda 3s para garantir que a instância anterior encerrou
 
     print("✈️ Iniciando bot de passagens aéreas...")
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
