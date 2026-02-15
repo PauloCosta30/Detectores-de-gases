@@ -1,10 +1,3 @@
-
-"""
-✈️ Bot de Alertas de Passagens Aéreas - Google Flights + Telegram
-Autor: Gerado com Claude
-Descrição: Monitora passagens aéreas no Google Flights e envia alertas
-           via Telegram quando o preço cai abaixo do valor configurado.
-"""
 import os
 import json
 import logging
@@ -29,11 +22,28 @@ from telegram.ext import (
 )
 
 # ─── SERVIDOR HTTP (OBRIGATÓRIO NO RENDER) ────────────────────────────────────
+# Referência global para o app do bot (usada no endpoint /check)
+_bot_app = None
+
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot Telegram rodando!")
+        if self.path == "/check" and _bot_app is not None:
+            # Força uma verificação de preços imediatamente
+            import asyncio
+            try:
+                loop = _bot_app.bot._loop if hasattr(_bot_app.bot, "_loop") else None
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"Verificacao agendada!")
+                logger.info("🔔 Verificação manual disparada via /check")
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(f"Erro: {e}".encode())
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot Telegram rodando!")
     def log_message(self, format, *args):
         pass
 
@@ -604,6 +614,57 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @requer_aprovacao
+async def verificar_agora(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Força uma verificação de preços imediata — útil para testar."""
+    alertas = gerenciador.listar_usuario(update.effective_chat.id)
+    if not alertas:
+        await update.message.reply_text(
+            "📭 Você não tem alertas ativos.\nUse /novo_alerta para criar um!"
+        )
+        return
+
+    await update.message.reply_text(
+        f"🔍 Verificando {len(alertas)} alerta(s) agora...\nAguarde!"
+    )
+
+    encontrou = False
+    for alerta in alertas:
+        try:
+            logger.info(f"[MANUAL] Buscando: {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
+            ofertas = scraper.buscar_ofertas(alerta)
+            if ofertas:
+                encontrou = True
+                texto = (
+                    f"🚨 *OFERTA ENCONTRADA!* 🚨\n\n"
+                    f"✈️ *{alerta.origem}* → *{alerta.destino}*\n"
+                    f"📅 Data: *{alerta.data_partida}*\n"
+                    f"💰 Seu limite: R$ {alerta.preco_maximo:.2f}\n\n"
+                    f"*🔥 Melhores ofertas:*\n\n"
+                )
+                for i, v in enumerate(ofertas, 1):
+                    escalas = "Direto" if v["escalas"] == 0 else f"{v['escalas']} escala(s)"
+                    texto += (
+                        f"*{i}.* {v['destino']}\n"
+                        f"   💸 *R$ {v['preco']:.2f}* | {v['cia']} | {escalas}\n\n"
+                    )
+                texto += "⚡ Corra! Preços mudam a qualquer momento!"
+                await update.message.reply_text(texto, parse_mode="Markdown")
+            else:
+                await update.message.reply_text(
+                    f"ℹ️ *{alerta.origem} → {alerta.destino}*\n"
+                    f"Nenhuma oferta abaixo de R$ {alerta.preco_maximo:.2f} no momento.",
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            logger.error(f"Erro na verificação manual: {e}")
+            await update.message.reply_text(
+                f"❌ Erro ao buscar voos: `{e}`\n\n"
+                f"Verifique se a SERPAPI\_KEY está configurada corretamente no Render.",
+                parse_mode="Markdown"
+            )
+
+
+@requer_aprovacao
 async def meus_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     alertas = gerenciador.listar_usuario(update.effective_chat.id)
     if not alertas:
@@ -727,6 +788,8 @@ def main():
 
     print("✈️ Iniciando bot de passagens aéreas...")
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    global _bot_app
+    _bot_app = app
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("novo_alerta", novo_alerta)],
@@ -745,11 +808,12 @@ def main():
     app.add_handler(conv)
     app.add_handler(CommandHandler("meus_alertas",   meus_alertas))
     app.add_handler(CommandHandler("remover_alerta", remover_alerta))
+    app.add_handler(CommandHandler("verificar",      verificar_agora))
     app.add_handler(CallbackQueryHandler(cb_aprovar, pattern=r"^aprv\|"))
     app.add_handler(CallbackQueryHandler(cb_negar,   pattern=r"^neg\|"))
     app.add_handler(CallbackQueryHandler(cb_remover, pattern=r"^del\|"))
 
-    app.job_queue.run_repeating(verificar_precos, interval=INTERVALO_MINUTOS * 60, first=30)
+    app.job_queue.run_repeating(verificar_precos, interval=10 * 60, first=60)
     app.add_error_handler(handler_erros)
 
     print("✅ Bot rodando! Aguardando mensagens...")
