@@ -223,7 +223,7 @@ class GoogleFlightsScraper:
             "hl":            "pt",
             "gl":            "br",
             "api_key":       SERPAPI_KEY,
-            "type":          "1",
+            "type":          "2",
         }
         try:
             r = requests.get(self.BASE_URL, params=params, timeout=30)
