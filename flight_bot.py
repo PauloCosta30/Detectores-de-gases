@@ -355,7 +355,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat_id == ADMIN_CHAT_ID:
         await update.message.reply_text(
-            f"👑 Bem-vindo, *Admin*!\n\n"
+            f"✈️ *Bot de Alertas de Passagens Aéreas*\n\n"
+            f"Olá! Eu monitoro o Google Flights e te aviso quando aparecer passagens baratas!\n\n"
+            f"📋 *Comandos disponíveis:*\n"
             f"• /novo\\_alerta — Criar alerta\n"
             f"• /meus\\_alertas — Ver alertas\n"
             f"• /remover\\_alerta — Remover alerta\n"
