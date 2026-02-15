@@ -221,13 +221,23 @@ class GoogleFlightsScraper:
             "outbound_date": data,
             "currency":      "BRL",
             "hl":            "pt",
+            "gl":            "br",
             "api_key":       SERPAPI_KEY,
             "type":          "1",
         }
         try:
             r = requests.get(self.BASE_URL, params=params, timeout=30)
-            r.raise_for_status()
             dados = r.json()
+
+            # Verifica erros retornados pela SerpAPI
+            if "error" in dados:
+                logger.error(f"SerpAPI erro ({origem}→{destino}): {dados['error']}")
+                return []
+
+            if r.status_code != 200:
+                logger.error(f"SerpAPI status {r.status_code} ({origem}→{destino})")
+                return []
+
             voos = []
             for secao in ["best_flights", "other_flights"]:
                 for v in dados.get(secao, []):
