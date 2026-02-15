@@ -8,6 +8,7 @@ from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import time
+import asyncio
 import requests
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Conflict, NetworkError
@@ -813,13 +814,75 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_negar,   pattern=r"^neg\|"))
     app.add_handler(CallbackQueryHandler(cb_remover, pattern=r"^del\|"))
 
-    app.job_queue.run_repeating(verificar_precos, interval=10 * 60, first=60)
     app.add_error_handler(handler_erros)
+
+    # Thread dedicada para verificação de preços (independente do polling)
+    def loop_verificacao():
+        import asyncio
+        logger.info("🕐 Thread de verificação iniciada. Primeira busca em 60s...")
+        time.sleep(60)  # aguarda 60s antes da primeira verificação
+        while True:
+            try:
+                logger.info("⏰ Executando verificação de preços...")
+                alertas = gerenciador.todos_ativos()
+                if not alertas:
+                    logger.info("📭 Nenhum alerta ativo no momento.")
+                else:
+                    logger.info(f"🔍 Verificando {len(alertas)} alerta(s)...")
+                    for alerta in alertas:
+                        try:
+                            logger.info(f"  → {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
+                            ofertas = scraper.buscar_ofertas(alerta)
+                            if ofertas:
+                                logger.info(f"  ✅ {len(ofertas)} oferta(s) encontrada(s)!")
+                                texto = (
+                                    f"🚨 *OFERTA ENCONTRADA!* 🚨
+
+"
+                                    f"✈️ *{alerta.origem}* → *{alerta.destino}*
+"
+                                    f"📅 Data: *{alerta.data_partida}*
+"
+                                    f"💰 Seu limite: R$ {alerta.preco_maximo:.2f}
+
+"
+                                    f"*🔥 Melhores ofertas:*
+
+"
+                                )
+                                for i, v in enumerate(ofertas, 1):
+                                    escalas = "Direto" if v["escalas"] == 0 else f"{v['escalas']} escala(s)"
+                                    texto += (
+                                        f"*{i}.* {v['destino']}
+"
+                                        f"   💸 *R$ {v['preco']:.2f}* | {v['cia']} | {escalas}
+
+"
+                                    )
+                                texto += "⚡ Corra! Preços mudam a qualquer momento!"
+                                asyncio.run(
+                                    app.bot.send_message(
+                                        chat_id=alerta.chat_id,
+                                        text=texto,
+                                        parse_mode="Markdown"
+                                    )
+                                )
+                                gerenciador.marcar_enviado(alerta)
+                            else:
+                                logger.info(f"  ℹ️ Nenhuma oferta abaixo de R${alerta.preco_maximo}.")
+                        except Exception as e:
+                            logger.error(f"  ❌ Erro no alerta: {e}")
+            except Exception as e:
+                logger.error(f"❌ Erro no loop de verificação: {e}")
+            time.sleep(10 * 60)  # aguarda 10 minutos antes da próxima verificação
+
+    Thread(target=loop_verificacao, daemon=True).start()
+    logger.info("✅ Thread de verificação de preços iniciada!")
 
     print("✅ Bot rodando! Aguardando mensagens...")
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,   # evita conflito com instância anterior
+        drop_pending_updates=True,
     )
 
 
