@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
@@ -7,8 +9,6 @@ from dataclasses import dataclass, field, asdict
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-import time
-import asyncio
 import requests
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Conflict, NetworkError
@@ -23,28 +23,13 @@ from telegram.ext import (
 )
 
 # ─── SERVIDOR HTTP (OBRIGATÓRIO NO RENDER) ────────────────────────────────────
-# Referência global para o app do bot (usada no endpoint /check)
 _bot_app = None
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/check" and _bot_app is not None:
-            # Força uma verificação de preços imediatamente
-            import asyncio
-            try:
-                loop = _bot_app.bot._loop if hasattr(_bot_app.bot, "_loop") else None
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"Verificacao agendada!")
-                logger.info("🔔 Verificação manual disparada via /check")
-            except Exception as e:
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(f"Erro: {e}".encode())
-        else:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot Telegram rodando!")
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Telegram rodando!")
     def log_message(self, format, *args):
         pass
 
@@ -64,8 +49,8 @@ logger = logging.getLogger(__name__)
 # ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
 SERPAPI_KEY        = os.getenv("SERPAPI_KEY", "SUA_CHAVE_SERPAPI_AQUI")
-ADMIN_CHAT_ID      = int(os.getenv("ADMIN_CHAT_ID", "0"))   # SEU chat_id aqui
-INTERVALO_MINUTOS  = 15
+ADMIN_CHAT_ID      = int(os.getenv("ADMIN_CHAT_ID", "0"))
+INTERVALO_MINUTOS  = 10
 
 # ─── ESTADOS DA CONVERSA ──────────────────────────────────────────────────────
 ORIGEM, DESTINO, DATA, PRECO = range(4)
@@ -87,9 +72,9 @@ AEROPORTOS = {
     "Rio de Janeiro (GIG)":  "GIG",
     "Rio de Janeiro (SDU)":  "SDU",
     "Salvador (SSA)":        "SSA",
+    "São Luís (SLZ)":        "SLZ",
     "São Paulo (GRU)":       "GRU",
     "São Paulo (CGH)":       "CGH",
-    "São Luís (SLZ)":        "SLZ",
     "Vitória (VIX)":         "VIX",
 }
 
@@ -110,13 +95,9 @@ class AlertaPassagem:
 
 # ─── GERENCIADOR DE USUÁRIOS ──────────────────────────────────────────────────
 class GerenciadorUsuarios:
-    """
-    Controla quem pode usar o bot.
-    Status possíveis: "pendente", "aprovado", "negado"
-    """
     def __init__(self, arquivo="usuarios.json"):
         self.arquivo = arquivo
-        self.usuarios: dict[str, dict] = {}   # chave = str(chat_id)
+        self.usuarios: dict = {}
         self.carregar()
 
     def carregar(self):
@@ -124,7 +105,6 @@ class GerenciadorUsuarios:
             try:
                 with open(self.arquivo, "r", encoding="utf-8") as f:
                     self.usuarios = json.load(f)
-                logger.info(f"✅ {len(self.usuarios)} usuários carregados.")
             except Exception as e:
                 logger.warning(f"⚠️ Erro ao carregar usuários: {e}")
 
@@ -136,16 +116,16 @@ class GerenciadorUsuarios:
         key = str(chat_id)
         if key not in self.usuarios:
             self.usuarios[key] = {
-                "chat_id":    chat_id,
-                "nome":       nome,
-                "username":   username or "",
-                "status":     "pendente",
-                "solicitado": datetime.now().isoformat(),
+                "chat_id":     chat_id,
+                "nome":        nome,
+                "username":    username or "",
+                "status":      "pendente",
+                "solicitado":  datetime.now().isoformat(),
                 "aprovado_em": None,
             }
             self.salvar()
-            return "novo"       # primeira vez
-        return self.usuarios[key]["status"]   # "pendente", "aprovado", "negado"
+            return "novo"
+        return self.usuarios[key]["status"]
 
     def status(self, chat_id: int) -> str:
         info = self.usuarios.get(str(chat_id))
@@ -165,16 +145,12 @@ class GerenciadorUsuarios:
             self.salvar()
 
     def eh_aprovado(self, chat_id: int) -> bool:
-        # O admin sempre tem acesso
         if chat_id == ADMIN_CHAT_ID:
             return True
         return self.status(chat_id) == "aprovado"
 
-    def pendentes(self) -> list[dict]:
+    def pendentes(self) -> list:
         return [u for u in self.usuarios.values() if u["status"] == "pendente"]
-
-    def info(self, chat_id: int) -> Optional[dict]:
-        return self.usuarios.get(str(chat_id))
 
 
 usuarios = GerenciadorUsuarios()
@@ -184,7 +160,7 @@ usuarios = GerenciadorUsuarios()
 class GerenciadorAlertas:
     def __init__(self, arquivo="alertas.json"):
         self.arquivo = arquivo
-        self.alertas: list[AlertaPassagem] = []
+        self.alertas: list = []
         self.carregar()
 
     def carregar(self):
@@ -209,6 +185,7 @@ class GerenciadorAlertas:
     def adicionar(self, alerta: AlertaPassagem):
         self.alertas.append(alerta)
         self.salvar()
+        logger.info(f"➕ {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
 
     def listar_usuario(self, chat_id: int):
         return [a for a in self.alertas if a.chat_id == chat_id and a.ativo]
@@ -228,6 +205,7 @@ class GerenciadorAlertas:
         alerta.ultimo_alerta = datetime.now().isoformat()
         self.salvar()
 
+
 gerenciador = GerenciadorAlertas()
 
 
@@ -235,7 +213,7 @@ gerenciador = GerenciadorAlertas()
 class GoogleFlightsScraper:
     BASE_URL = "https://serpapi.com/search"
 
-    def buscar_voos(self, origem: str, destino: str, data: str) -> list[dict]:
+    def buscar_voos(self, origem: str, destino: str, data: str) -> list:
         params = {
             "engine":        "google_flights",
             "departure_id":  origem,
@@ -266,7 +244,7 @@ class GoogleFlightsScraper:
             logger.error(f"Erro SerpAPI ({origem}→{destino}): {e}")
             return []
 
-    def buscar_ofertas(self, alerta: AlertaPassagem) -> list[dict]:
+    def buscar_ofertas(self, alerta: AlertaPassagem) -> list:
         resultados = []
         if alerta.codigo_destino != "TODOS":
             for voo in self.buscar_voos(alerta.codigo_origem, alerta.codigo_destino, alerta.data_partida):
@@ -282,52 +260,97 @@ class GoogleFlightsScraper:
                         resultados.append(voo)
         return sorted(resultados, key=lambda x: x["preco"])[:5]
 
+
 scraper = GoogleFlightsScraper()
+
+
+# ─── VERIFICADOR DE PREÇOS (THREAD DEDICADA) ──────────────────────────────────
+def montar_mensagem_oferta(alerta: AlertaPassagem, ofertas: list) -> str:
+    texto = (
+        "🚨 *OFERTA ENCONTRADA!* 🚨\n\n"
+        f"✈️ *{alerta.origem}* → *{alerta.destino}*\n"
+        f"📅 Data: *{alerta.data_partida}*\n"
+        f"💰 Seu limite: R$ {alerta.preco_maximo:.2f}\n\n"
+        "*🔥 Melhores ofertas:*\n\n"
+    )
+    for i, v in enumerate(ofertas, 1):
+        escalas = "Direto" if v["escalas"] == 0 else f"{v['escalas']} escala(s)"
+        texto += f"*{i}.* {v['destino']}\n   💸 *R$ {v['preco']:.2f}* | {v['cia']} | {escalas}\n\n"
+    texto += "⚡ Corra! Preços mudam a qualquer momento!"
+    return texto
+
+
+def loop_verificacao(app: Application):
+    """Thread dedicada que verifica preços a cada INTERVALO_MINUTOS."""
+    logger.info("🕐 Thread de verificação iniciada. Primeira busca em 60s...")
+    time.sleep(60)
+    while True:
+        try:
+            agora = datetime.now().strftime("%H:%M:%S")
+            alertas = gerenciador.todos_ativos()
+            if not alertas:
+                logger.info(f"[{agora}] 📭 Nenhum alerta ativo.")
+            else:
+                logger.info(f"[{agora}] 🔍 Verificando {len(alertas)} alerta(s)...")
+                for alerta in alertas:
+                    try:
+                        logger.info(f"  → {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
+                        ofertas = scraper.buscar_ofertas(alerta)
+                        if ofertas:
+                            logger.info(f"  ✅ {len(ofertas)} oferta(s) encontrada(s)!")
+                            texto = montar_mensagem_oferta(alerta, ofertas)
+                            asyncio.run(
+                                app.bot.send_message(
+                                    chat_id=alerta.chat_id,
+                                    text=texto,
+                                    parse_mode="Markdown"
+                                )
+                            )
+                            gerenciador.marcar_enviado(alerta)
+                        else:
+                            logger.info(f"  ℹ️ Nenhuma oferta abaixo de R${alerta.preco_maximo}.")
+                    except Exception as e:
+                        logger.error(f"  ❌ Erro no alerta: {e}")
+        except Exception as e:
+            logger.error(f"❌ Erro no loop de verificação: {e}")
+        time.sleep(INTERVALO_MINUTOS * 60)
 
 
 # ─── DECORATOR: exige aprovação ───────────────────────────────────────────────
 def requer_aprovacao(func):
-    """Bloqueia comandos para usuários não aprovados."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         if not usuarios.eh_aprovado(chat_id):
             status = usuarios.status(chat_id)
             if status == "pendente":
                 await update.message.reply_text(
-                    "⏳ Sua solicitação de acesso ainda está *pendente*.\n\n"
-                    "Aguarde a aprovação do administrador. Você será notificado assim que liberado!",
+                    "⏳ Sua solicitação ainda está *pendente*.\nAguarde a aprovação do administrador!",
                     parse_mode="Markdown"
                 )
             elif status == "negado":
-                await update.message.reply_text(
-                    "❌ Seu acesso foi *negado* pelo administrador.",
-                    parse_mode="Markdown"
-                )
+                await update.message.reply_text("❌ Seu acesso foi *negado*.", parse_mode="Markdown")
             else:
-                await update.message.reply_text(
-                    "⚠️ Você ainda não solicitou acesso. Use /start primeiro."
-                )
+                await update.message.reply_text("⚠️ Use /start para solicitar acesso.")
             return
         return await func(update, context)
     return wrapper
 
 
-# ─── HANDLERS DO TELEGRAM ─────────────────────────────────────────────────────
+# ─── HANDLERS ─────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id  = update.effective_chat.id
     nome     = update.effective_user.full_name or "Usuário"
     username = update.effective_user.username or ""
 
-    # Admin não precisa de aprovação
     if chat_id == ADMIN_CHAT_ID:
         await update.message.reply_text(
-            f"👑 Bem-vindo de volta, *Admin*!\n\n"
-            f"Comandos disponíveis:\n"
-            f"• /novo\\_alerta — Criar alerta de preço\n"
-            f"• /meus\\_alertas — Ver alertas ativos\n"
-            f"• /remover\\_alerta — Remover um alerta\n"
-            f"• /pendentes — Ver solicitações pendentes",
+            f"👑 Bem-vindo, *Admin*!\n\n"
+            f"• /novo\\_alerta — Criar alerta\n"
+            f"• /meus\\_alertas — Ver alertas\n"
+            f"• /remover\\_alerta — Remover alerta\n"
+            f"• /verificar — Buscar preços agora\n"
+            f"• /pendentes — Solicitações pendentes",
             parse_mode="Markdown"
         )
         return
@@ -335,7 +358,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resultado = usuarios.registrar(chat_id, nome, username)
 
     if resultado == "novo":
-        # Notifica o admin com botões de aprovar/negar
         user_str = f"@{username}" if username else f"ID: {chat_id}"
         botoes = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Aprovar", callback_data=f"aprv|{chat_id}|{nome}"),
@@ -344,123 +366,79 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
-                text=(
-                    f"🔔 *Nova solicitação de acesso!*\n\n"
-                    f"👤 Nome: *{nome}*\n"
-                    f"📱 {user_str}\n"
-                    f"🆔 Chat ID: `{chat_id}`"
-                ),
+                text=f"🔔 *Nova solicitação!*\n\n👤 *{nome}*\n📱 {user_str}\n🆔 `{chat_id}`",
                 reply_markup=botoes,
                 parse_mode="Markdown"
             )
         except Exception as e:
             logger.error(f"Erro ao notificar admin: {e}")
-
         await update.message.reply_text(
-            f"👋 Olá, *{nome}*!\n\n"
-            f"✈️ Bem-vindo ao Bot de Alertas de Passagens Aéreas!\n\n"
-            f"📋 Sua solicitação de acesso foi enviada ao administrador.\n"
-            f"Você receberá uma notificação assim que for aprovado! 🔔",
+            f"👋 Olá, *{nome}*!\n\n✈️ Bem-vindo ao Bot de Alertas de Passagens!\n\n"
+            f"📋 Sua solicitação foi enviada ao administrador.\nVocê será notificado quando aprovado! 🔔",
             parse_mode="Markdown"
         )
-
     elif resultado == "aprovado":
         await update.message.reply_text(
-            f"✅ Olá, *{nome}*! Você já tem acesso liberado.\n\n"
-            f"Comandos disponíveis:\n"
-            f"• /novo\\_alerta — Criar alerta de preço\n"
-            f"• /meus\\_alertas — Ver alertas ativos\n"
-            f"• /remover\\_alerta — Remover um alerta",
+            f"✅ Olá, *{nome}*!\n\n"
+            f"• /novo\\_alerta — Criar alerta\n"
+            f"• /meus\\_alertas — Ver alertas\n"
+            f"• /remover\\_alerta — Remover alerta\n"
+            f"• /verificar — Buscar preços agora",
             parse_mode="Markdown"
         )
-
     elif resultado == "pendente":
         await update.message.reply_text(
-            f"⏳ Olá, *{nome}*! Sua solicitação ainda está *pendente*.\n\n"
-            f"Aguarde a aprovação do administrador.",
+            f"⏳ Olá, *{nome}*! Sua solicitação está *pendente*.\nAguarde a aprovação.",
             parse_mode="Markdown"
         )
-
     elif resultado == "negado":
-        await update.message.reply_text(
-            f"❌ Desculpe, *{nome}*. Seu acesso foi negado pelo administrador.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"❌ Desculpe, *{nome}*. Seu acesso foi negado.", parse_mode="Markdown")
 
 
-# ── Callbacks de aprovar / negar ──────────────────────────────────────────────
 async def cb_aprovar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     if update.effective_chat.id != ADMIN_CHAT_ID:
-        await q.answer("⛔ Apenas o administrador pode fazer isso.", show_alert=True)
+        await q.answer("⛔ Apenas o administrador.", show_alert=True)
         return
-
     _, chat_id_str, nome = q.data.split("|", 2)
     chat_id = int(chat_id_str)
     usuarios.aprovar(chat_id)
-
-    await q.edit_message_text(
-        f"✅ *{nome}* foi *aprovado* com sucesso!\n🆔 ID: `{chat_id}`",
-        parse_mode="Markdown"
-    )
-
-    # Avisa o usuário que foi aprovado
+    await q.edit_message_text(f"✅ *{nome}* aprovado!\n🆔 `{chat_id}`", parse_mode="Markdown")
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "🎉 *Acesso aprovado!*\n\n"
-                "Você já pode usar o bot! ✈️\n\n"
-                "Comandos disponíveis:\n"
-                "• /novo\\_alerta — Criar alerta de preço\n"
-                "• /meus\\_alertas — Ver alertas ativos\n"
-                "• /remover\\_alerta — Remover um alerta"
-            ),
+            text="🎉 *Acesso aprovado!*\n\n• /novo\\_alerta — Criar alerta\n• /meus\\_alertas — Ver alertas\n• /verificar — Buscar preços agora",
             parse_mode="Markdown"
         )
     except Exception as e:
-        logger.error(f"Erro ao avisar usuário aprovado: {e}")
+        logger.error(f"Erro ao avisar usuário: {e}")
 
 
 async def cb_negar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     if update.effective_chat.id != ADMIN_CHAT_ID:
-        await q.answer("⛔ Apenas o administrador pode fazer isso.", show_alert=True)
+        await q.answer("⛔ Apenas o administrador.", show_alert=True)
         return
-
     _, chat_id_str, nome = q.data.split("|", 2)
     chat_id = int(chat_id_str)
     usuarios.negar(chat_id)
-
-    await q.edit_message_text(
-        f"❌ *{nome}* foi *negado*.\n🆔 ID: `{chat_id}`",
-        parse_mode="Markdown"
-    )
-
+    await q.edit_message_text(f"❌ *{nome}* negado.\n🆔 `{chat_id}`", parse_mode="Markdown")
     try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="❌ Sua solicitação de acesso foi negada pelo administrador."
-        )
+        await context.bot.send_message(chat_id=chat_id, text="❌ Sua solicitação foi negada.")
     except Exception as e:
-        logger.error(f"Erro ao avisar usuário negado: {e}")
+        logger.error(f"Erro ao avisar usuário: {e}")
 
 
-# ── /pendentes (apenas admin) ─────────────────────────────────────────────────
 async def pendentes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Comando exclusivo do administrador.")
         return
-
     lista = usuarios.pendentes()
     if not lista:
-        await update.message.reply_text("✅ Nenhuma solicitação pendente no momento.")
+        await update.message.reply_text("✅ Nenhuma solicitação pendente.")
         return
-
     for u in lista:
         user_str = f"@{u['username']}" if u["username"] else f"ID: {u['chat_id']}"
         botoes = InlineKeyboardMarkup([[
@@ -468,11 +446,7 @@ async def pendentes(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ Negar",   callback_data=f"neg|{u['chat_id']}|{u['nome']}"),
         ]])
         await update.message.reply_text(
-            f"🔔 *Solicitação pendente*\n\n"
-            f"👤 Nome: *{u['nome']}*\n"
-            f"📱 {user_str}\n"
-            f"🆔 Chat ID: `{u['chat_id']}`\n"
-            f"🕐 Solicitado em: {u['solicitado'][:10]}",
+            f"🔔 *Pendente*\n\n👤 *{u['nome']}*\n📱 {user_str}\n🆔 `{u['chat_id']}`",
             reply_markup=botoes,
             parse_mode="Markdown"
         )
@@ -482,7 +456,6 @@ async def pendentes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requer_aprovacao
 async def novo_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-
     lista  = list(AEROPORTOS.items())
     botoes = []
     for i in range(0, len(lista), 2):
@@ -490,7 +463,6 @@ async def novo_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for nome, cod in lista[i:i+2]:
             linha.append(InlineKeyboardButton(nome, callback_data=f"orig|{cod}|{nome}"))
         botoes.append(linha)
-
     await update.message.reply_text(
         "🛫 *De qual cidade você vai partir?*\n\nEscolha sua origem:",
         reply_markup=InlineKeyboardMarkup(botoes),
@@ -502,15 +474,12 @@ async def novo_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_origem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     _, cod, nome = q.data.split("|", 2)
     context.user_data["origem_cod"]  = cod
     context.user_data["origem_nome"] = nome
 
     lista  = list(AEROPORTOS.items())
-    botoes = [
-        [InlineKeyboardButton("🌎  Qualquer lugar no Brasil", callback_data="dest|TODOS|Qualquer lugar no Brasil")]
-    ]
+    botoes = [[InlineKeyboardButton("🌎  Qualquer lugar no Brasil", callback_data="dest|TODOS|Qualquer lugar no Brasil")]]
     for i in range(0, len(lista), 2):
         linha = []
         for nome_dest, cod_dest in lista[i:i+2]:
@@ -518,10 +487,8 @@ async def cb_origem(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 linha.append(InlineKeyboardButton(nome_dest, callback_data=f"dest|{cod_dest}|{nome_dest}"))
         if linha:
             botoes.append(linha)
-
     await q.edit_message_text(
-        f"✅ Origem: *{nome}*\n\n"
-        f"🛬 *Para onde você quer ir?*\n\nEscolha o destino:",
+        f"✅ Origem: *{nome}*\n\n🛬 *Para onde você quer ir?*\n\nEscolha o destino:",
         reply_markup=InlineKeyboardMarkup(botoes),
         parse_mode="Markdown"
     )
@@ -531,17 +498,13 @@ async def cb_origem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_destino(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     _, cod, nome = q.data.split("|", 2)
     context.user_data["destino_cod"]  = cod
     context.user_data["destino_nome"] = nome
-
     await q.edit_message_text(
         f"✅ Origem: *{context.user_data['origem_nome']}*\n"
         f"✅ Destino: *{nome}*\n\n"
-        f"📅 *Qual a data da viagem?*\n\n"
-        f"Digite no formato DD/MM/AAAA\n"
-        f"_Exemplo: 25/02/2026_",
+        f"📅 *Qual a data da viagem?*\n\nFormato: DD/MM/AAAA\n_Exemplo: 25/02/2026_",
         parse_mode="Markdown"
     )
     return DATA
@@ -557,17 +520,12 @@ async def receber_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["data_br"] = texto
     except ValueError:
         await update.message.reply_text(
-            "❌ Data inválida! Use o formato *DD/MM/AAAA* e uma data futura.\n"
-            "_Exemplo: 25/02/2026_",
+            "❌ Data inválida! Use *DD/MM/AAAA* com data futura.\n_Exemplo: 25/02/2026_",
             parse_mode="Markdown"
         )
         return DATA
-
     await update.message.reply_text(
-        f"✅ Data: *{texto}*\n\n"
-        f"💰 *Qual o preço máximo que você quer pagar?*\n\n"
-        f"Digite só o número em reais\n"
-        f"_Exemplo: 600_",
+        f"✅ Data: *{texto}*\n\n💰 *Qual o preço máximo?*\n\nDigite só o número\n_Exemplo: 600_",
         parse_mode="Markdown"
     )
     return PRECO
@@ -580,10 +538,7 @@ async def receber_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if preco <= 0:
             raise ValueError()
     except ValueError:
-        await update.message.reply_text(
-            "❌ Valor inválido! Digite apenas o número.\n_Exemplo: 600_",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Valor inválido!\n_Exemplo: 600_", parse_mode="Markdown")
         return PRECO
 
     alerta = AlertaPassagem(
@@ -596,14 +551,13 @@ async def receber_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data_partida   = context.user_data["data"],
     )
     gerenciador.adicionar(alerta)
-
     await update.message.reply_text(
-        f"🎉 *Alerta criado com sucesso!*\n\n"
+        f"🎉 *Alerta criado!*\n\n"
         f"📍 Origem: *{alerta.origem}*\n"
         f"🎯 Destino: *{alerta.destino}*\n"
-        f"💰 Preço máximo: *R$ {preco:.2f}*\n"
+        f"💰 Máximo: *R$ {preco:.2f}*\n"
         f"📅 Data: *{context.user_data['data_br']}*\n\n"
-        f"⏰ Vou verificar a cada {INTERVALO_MINUTOS} minutos e te aviso quando achar uma oferta! 🔔",
+        f"⏰ Verifico a cada {INTERVALO_MINUTOS} minutos e aviso quando achar! 🔔",
         parse_mode="Markdown"
     )
     return ConversationHandler.END
@@ -615,71 +569,14 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @requer_aprovacao
-async def verificar_agora(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Força uma verificação de preços imediata — útil para testar."""
-    alertas = gerenciador.listar_usuario(update.effective_chat.id)
-    if not alertas:
-        await update.message.reply_text(
-            "📭 Você não tem alertas ativos.\nUse /novo_alerta para criar um!"
-        )
-        return
-
-    await update.message.reply_text(
-        f"🔍 Verificando {len(alertas)} alerta(s) agora...\nAguarde!"
-    )
-
-    encontrou = False
-    for alerta in alertas:
-        try:
-            logger.info(f"[MANUAL] Buscando: {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
-            ofertas = scraper.buscar_ofertas(alerta)
-            if ofertas:
-                encontrou = True
-                texto = (
-                    f"🚨 *OFERTA ENCONTRADA!* 🚨\n\n"
-                    f"✈️ *{alerta.origem}* → *{alerta.destino}*\n"
-                    f"📅 Data: *{alerta.data_partida}*\n"
-                    f"💰 Seu limite: R$ {alerta.preco_maximo:.2f}\n\n"
-                    f"*🔥 Melhores ofertas:*\n\n"
-                )
-                for i, v in enumerate(ofertas, 1):
-                    escalas = "Direto" if v["escalas"] == 0 else f"{v['escalas']} escala(s)"
-                    texto += (
-                        f"*{i}.* {v['destino']}\n"
-                        f"   💸 *R$ {v['preco']:.2f}* | {v['cia']} | {escalas}\n\n"
-                    )
-                texto += "⚡ Corra! Preços mudam a qualquer momento!"
-                await update.message.reply_text(texto, parse_mode="Markdown")
-            else:
-                await update.message.reply_text(
-                    f"ℹ️ *{alerta.origem} → {alerta.destino}*\n"
-                    f"Nenhuma oferta abaixo de R$ {alerta.preco_maximo:.2f} no momento.",
-                    parse_mode="Markdown"
-                )
-        except Exception as e:
-            logger.error(f"Erro na verificação manual: {e}")
-            await update.message.reply_text(
-                f"❌ Erro ao buscar voos: `{e}`\n\n"
-                f"Verifique se a SERPAPI\_KEY está configurada corretamente no Render.",
-                parse_mode="Markdown"
-            )
-
-
-@requer_aprovacao
 async def meus_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     alertas = gerenciador.listar_usuario(update.effective_chat.id)
     if not alertas:
-        await update.message.reply_text(
-            "📭 Você não tem alertas ativos.\nUse /novo_alerta para criar um!"
-        )
+        await update.message.reply_text("📭 Nenhum alerta ativo.\nUse /novo_alerta para criar!")
         return
-
     texto = "🔔 *Seus alertas ativos:*\n\n"
     for i, a in enumerate(alertas, 1):
-        texto += (
-            f"*{i}.* {a.origem} → {a.destino}\n"
-            f"   💰 Máx: R$ {a.preco_maximo:.2f} | 📅 {a.data_partida}\n\n"
-        )
+        texto += f"*{i}.* {a.origem} → {a.destino}\n   💰 R$ {a.preco_maximo:.2f} | 📅 {a.data_partida}\n\n"
     await update.message.reply_text(texto, parse_mode="Markdown")
 
 
@@ -689,14 +586,12 @@ async def remover_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not alertas:
         await update.message.reply_text("📭 Nenhum alerta para remover.")
         return
-
     botoes = []
     for i, a in enumerate(alertas):
         label = f"❌ {a.origem} → {a.destino} | R${a.preco_maximo:.0f} | {a.data_partida}"
         botoes.append([InlineKeyboardButton(label, callback_data=f"del|{i}")])
-
     await update.message.reply_text(
-        "🗑️ *Qual alerta deseja remover?*",
+        "🗑️ *Qual alerta remover?*",
         reply_markup=InlineKeyboardMarkup(botoes),
         parse_mode="Markdown"
     )
@@ -707,85 +602,72 @@ async def cb_remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     indice = int(q.data.split("|")[1])
     if gerenciador.remover(update.effective_chat.id, indice):
-        await q.edit_message_text("✅ Alerta removido com sucesso!")
+        await q.edit_message_text("✅ Alerta removido!")
     else:
         await q.edit_message_text("❌ Erro ao remover. Tente novamente.")
 
 
-# ─── VERIFICADOR PERIÓDICO ────────────────────────────────────────────────────
-async def verificar_precos(context: ContextTypes.DEFAULT_TYPE):
-    alertas = gerenciador.todos_ativos()
-    agora = datetime.now().strftime("%H:%M:%S")
+@requer_aprovacao
+async def verificar_agora(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Força verificação manual de preços."""
+    alertas = gerenciador.listar_usuario(update.effective_chat.id)
     if not alertas:
-        logger.info(f"[{agora}] ⏰ Verificação executada — nenhum alerta cadastrado.")
+        await update.message.reply_text("📭 Nenhum alerta ativo.\nUse /novo_alerta!")
         return
-    logger.info(f"[{agora}] 🔍 Verificando {len(alertas)} alerta(s)...")
+    await update.message.reply_text(f"🔍 Verificando {len(alertas)} alerta(s)... Aguarde!")
     for alerta in alertas:
         try:
-            logger.info(f"  → Buscando: {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
+            logger.info(f"[MANUAL] {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo}")
             ofertas = scraper.buscar_ofertas(alerta)
             if ofertas:
-                logger.info(f"  ✅ {len(ofertas)} oferta(s) encontrada(s)!")
-                texto = (
-                    f"🚨 *OFERTA ENCONTRADA!* 🚨\n\n"
-                    f"✈️ *{alerta.origem}* → *{alerta.destino}*\n"
-                    f"📅 Data: *{alerta.data_partida}*\n"
-                    f"💰 Seu limite: R$ {alerta.preco_maximo:.2f}\n\n"
-                    f"*🔥 Melhores ofertas:*\n\n"
-                )
-                for i, v in enumerate(ofertas, 1):
-                    escalas = "Direto" if v["escalas"] == 0 else f"{v['escalas']} escala(s)"
-                    texto += (
-                        f"*{i}.* {v['destino']}\n"
-                        f"   💸 *R$ {v['preco']:.2f}* | {v['cia']} | {escalas}\n\n"
-                    )
-                texto += "⚡ Corra! Preços mudam a qualquer momento!"
-                await context.bot.send_message(
-                    chat_id=alerta.chat_id,
-                    text=texto,
+                texto = montar_mensagem_oferta(alerta, ofertas)
+                await update.message.reply_text(texto, parse_mode="Markdown")
+            else:
+                await update.message.reply_text(
+                    f"ℹ️ *{alerta.origem} → {alerta.destino}*\n"
+                    f"Nenhuma oferta abaixo de R$ {alerta.preco_maximo:.2f} agora.",
                     parse_mode="Markdown"
                 )
-                gerenciador.marcar_enviado(alerta)
-            else:
-                logger.info(f"  ℹ️ Nenhuma oferta abaixo de R${alerta.preco_maximo} encontrada.")
         except Exception as e:
-            logger.error(f"  ❌ Erro ao verificar alerta: {e}")
+            logger.error(f"Erro na verificação manual: {e}")
+            await update.message.reply_text(
+                f"❌ Erro ao buscar: `{e}`\n\nVerifique se a *SERPAPI\\_KEY* está configurada no Render.",
+                parse_mode="Markdown"
+            )
 
 
-# ─── HANDLER DE ERROS ────────────────────────────────────────────────────────
+# ─── HANDLER DE ERROS ─────────────────────────────────────────────────────────
 async def handler_erros(update: object, context: ContextTypes.DEFAULT_TYPE):
     erro = context.error
     if isinstance(erro, Conflict):
-        logger.warning("⚠️ Conflict detectado — outra instância em encerramento. Aguardando...")
+        logger.warning("⚠️ Conflict — outra instância encerrando. Aguardando 5s...")
         time.sleep(5)
     elif isinstance(erro, NetworkError):
-        logger.warning(f"⚠️ Erro de rede: {erro}. Reconectando...")
+        logger.warning(f"⚠️ Erro de rede: {erro}")
     else:
-        logger.error(f"❌ Erro inesperado: {erro}")
+        logger.error(f"❌ Erro: {erro}")
 
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def limpar_sessao_anterior():
-    """Encerra qualquer getUpdates anterior via deleteWebhook antes de iniciar."""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook"
         requests.post(url, json={"drop_pending_updates": True}, timeout=10)
-        print("🧹 Sessão anterior encerrada com sucesso.")
+        print("🧹 Sessão anterior encerrada.")
     except Exception as e:
-        print(f"⚠️ Aviso ao limpar sessão: {e}")
+        print(f"⚠️ Aviso: {e}")
+
 
 def main():
     if TELEGRAM_BOT_TOKEN == "SEU_TOKEN_AQUI":
-        print("❌ Configure o TELEGRAM_BOT_TOKEN nas variáveis de ambiente!")
+        print("❌ Configure o TELEGRAM_BOT_TOKEN!")
         return
     if ADMIN_CHAT_ID == 0:
-        print("⚠️  AVISO: Configure o ADMIN_CHAT_ID para receber solicitações de acesso!")
+        print("⚠️  Configure o ADMIN_CHAT_ID!")
 
     Thread(target=iniciar_servidor_http, daemon=True).start()
-
-    # Limpa sessão anterior para evitar erro de Conflict
     limpar_sessao_anterior()
-    time.sleep(3)  # aguarda 3s para garantir que a instância anterior encerrou
+    time.sleep(3)
 
     print("✈️ Iniciando bot de passagens aéreas...")
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -813,71 +695,11 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_aprovar, pattern=r"^aprv\|"))
     app.add_handler(CallbackQueryHandler(cb_negar,   pattern=r"^neg\|"))
     app.add_handler(CallbackQueryHandler(cb_remover, pattern=r"^del\|"))
-
     app.add_error_handler(handler_erros)
 
-    # Thread dedicada para verificação de preços (independente do polling)
-    def loop_verificacao():
-        import asyncio
-        logger.info("🕐 Thread de verificação iniciada. Primeira busca em 60s...")
-        time.sleep(60)  # aguarda 60s antes da primeira verificação
-        while True:
-            try:
-                logger.info("⏰ Executando verificação de preços...")
-                alertas = gerenciador.todos_ativos()
-                if not alertas:
-                    logger.info("📭 Nenhum alerta ativo no momento.")
-                else:
-                    logger.info(f"🔍 Verificando {len(alertas)} alerta(s)...")
-                    for alerta in alertas:
-                        try:
-                            logger.info(f"  → {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
-                            ofertas = scraper.buscar_ofertas(alerta)
-                            if ofertas:
-                                logger.info(f"  ✅ {len(ofertas)} oferta(s) encontrada(s)!")
-                                texto = (
-                                    f"🚨 *OFERTA ENCONTRADA!* 🚨
-
-"
-                                    f"✈️ *{alerta.origem}* → *{alerta.destino}*
-"
-                                    f"📅 Data: *{alerta.data_partida}*
-"
-                                    f"💰 Seu limite: R$ {alerta.preco_maximo:.2f}
-
-"
-                                    f"*🔥 Melhores ofertas:*
-
-"
-                                )
-                                for i, v in enumerate(ofertas, 1):
-                                    escalas = "Direto" if v["escalas"] == 0 else f"{v['escalas']} escala(s)"
-                                    texto += (
-                                        f"*{i}.* {v['destino']}
-"
-                                        f"   💸 *R$ {v['preco']:.2f}* | {v['cia']} | {escalas}
-
-"
-                                    )
-                                texto += "⚡ Corra! Preços mudam a qualquer momento!"
-                                asyncio.run(
-                                    app.bot.send_message(
-                                        chat_id=alerta.chat_id,
-                                        text=texto,
-                                        parse_mode="Markdown"
-                                    )
-                                )
-                                gerenciador.marcar_enviado(alerta)
-                            else:
-                                logger.info(f"  ℹ️ Nenhuma oferta abaixo de R${alerta.preco_maximo}.")
-                        except Exception as e:
-                            logger.error(f"  ❌ Erro no alerta: {e}")
-            except Exception as e:
-                logger.error(f"❌ Erro no loop de verificação: {e}")
-            time.sleep(10 * 60)  # aguarda 10 minutos antes da próxima verificação
-
-    Thread(target=loop_verificacao, daemon=True).start()
-    logger.info("✅ Thread de verificação de preços iniciada!")
+    # Thread dedicada de verificação de preços
+    Thread(target=loop_verificacao, args=(app,), daemon=True).start()
+    logger.info("✅ Thread de verificação iniciada!")
 
     print("✅ Bot rodando! Aguardando mensagens...")
     app.run_polling(
