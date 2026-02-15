@@ -1,3 +1,10 @@
+
+"""
+✈️ Bot de Alertas de Passagens Aéreas - Google Flights + Telegram
+Autor: Gerado com Claude
+Descrição: Monitora passagens aéreas no Google Flights e envia alertas
+           via Telegram quando o preço cai abaixo do valor configurado.
+"""
 import os
 import json
 import logging
@@ -46,8 +53,8 @@ logger = logging.getLogger(__name__)
 # ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "SEU_TOKEN_AQUI")
 SERPAPI_KEY        = os.getenv("SERPAPI_KEY", "SUA_CHAVE_SERPAPI_AQUI")
-ADMIN_CHAT_ID      = int(os.getenv("ADMIN_CHAT_ID", "8012383697"))   # SEU chat_id aqui
-INTERVALO_MINUTOS  = 30
+ADMIN_CHAT_ID      = int(os.getenv("ADMIN_CHAT_ID", "0"))   # SEU chat_id aqui
+INTERVALO_MINUTOS  = 15
 
 # ─── ESTADOS DA CONVERSA ──────────────────────────────────────────────────────
 ORIGEM, DESTINO, DATA, PRECO = range(4)
@@ -71,6 +78,7 @@ AEROPORTOS = {
     "Salvador (SSA)":        "SSA",
     "São Paulo (GRU)":       "GRU",
     "São Paulo (CGH)":       "CGH",
+    "São Luís (SLZ)":        "SLZ",
     "Vitória (VIX)":         "VIX",
 }
 
@@ -645,13 +653,17 @@ async def cb_remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── VERIFICADOR PERIÓDICO ────────────────────────────────────────────────────
 async def verificar_precos(context: ContextTypes.DEFAULT_TYPE):
     alertas = gerenciador.todos_ativos()
+    agora = datetime.now().strftime("%H:%M:%S")
     if not alertas:
+        logger.info(f"[{agora}] ⏰ Verificação executada — nenhum alerta cadastrado.")
         return
-    logger.info(f"🔍 Verificando {len(alertas)} alertas...")
+    logger.info(f"[{agora}] 🔍 Verificando {len(alertas)} alerta(s)...")
     for alerta in alertas:
         try:
+            logger.info(f"  → Buscando: {alerta.origem} → {alerta.destino} | R${alerta.preco_maximo} | {alerta.data_partida}")
             ofertas = scraper.buscar_ofertas(alerta)
             if ofertas:
+                logger.info(f"  ✅ {len(ofertas)} oferta(s) encontrada(s)!")
                 texto = (
                     f"🚨 *OFERTA ENCONTRADA!* 🚨\n\n"
                     f"✈️ *{alerta.origem}* → *{alerta.destino}*\n"
@@ -672,8 +684,10 @@ async def verificar_precos(context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
                 gerenciador.marcar_enviado(alerta)
+            else:
+                logger.info(f"  ℹ️ Nenhuma oferta abaixo de R${alerta.preco_maximo} encontrada.")
         except Exception as e:
-            logger.error(f"Erro ao verificar alerta: {e}")
+            logger.error(f"  ❌ Erro ao verificar alerta: {e}")
 
 
 # ─── HANDLER DE ERROS ────────────────────────────────────────────────────────
@@ -735,7 +749,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_negar,   pattern=r"^neg\|"))
     app.add_handler(CallbackQueryHandler(cb_remover, pattern=r"^del\|"))
 
-    app.job_queue.run_repeating(verificar_precos, interval=INTERVALO_MINUTOS * 60, first=15)
+    app.job_queue.run_repeating(verificar_precos, interval=INTERVALO_MINUTOS * 60, first=30)
     app.add_error_handler(handler_erros)
 
     print("✅ Bot rodando! Aguardando mensagens...")
